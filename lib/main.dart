@@ -29,9 +29,103 @@ class TelaProdutos extends StatefulWidget {
 }
 
 class _TelaProdutosState extends State<TelaProdutos> {
+  List<Produto> _produtos = [];
+  bool _carregando = false;
+  String? _erro;
+
+  @override
+  void initState() {
+    super.initState();
+    _carregar();
+  }
+
+  Future<void> _carregar() async {
+    if (_carregando) return;
+    setState(() {
+      _carregando = true;
+      _erro = null;
+    });
+    try {
+      final lista = await buscarProdutos();
+      if (!mounted) return;
+      setState(() {
+        _produtos = lista;
+      });
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() {
+        _erro = 'O servidor demorou. Tente novamente.';
+      });
+    } on FormatException {
+      if (!mounted) return;
+      setState(() {
+        _erro = 'Resposta fora do contrato de produtos.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _erro = 'Falha na consulta. Confira URL e conexão.';
+      });
+    } finally {
+      if (mounted)
+        setState(() {
+          _carregando = false;
+        });
+    }
+  }
+
+  Widget _conteudo() {
+    if (_carregando) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_erro != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_erro!),
+              FilledButton(
+                onPressed: _carregar,
+                child: const Text('Tentar novamente'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_produtos.isEmpty) {
+      return const Center(child: Text('Nenhum produto cadastrado.'));
+    }
+    return ListView.builder(
+      itemCount: _produtos.length,
+      itemBuilder: (context, indice) {
+        final produto = _produtos[indice];
+        return ListTile(
+          title: Text(produto.nome),
+          subtitle: Text('Estoque: ${produto.estoque}'),
+          trailing: Text('BRL ${produto.preco.toStringAsFixed(2)}'),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(body: Center(child: Text('Catálogo da turma')));
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Catálogo da turma'),
+        actions: [
+          IconButton(
+            onPressed: _carregando ? null : _carregar,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Atualizar',
+          ),
+        ],
+      ),
+      body: _conteudo(),
+    );
   }
 }
 
@@ -72,4 +166,23 @@ class Produto {
       estoque: estoque.toInt(),
     );
   }
+}
+
+Future<List<Produto>> buscarProdutos() async {
+  final resposta = await http
+      .get(Uri.parse(endpoint))
+      .timeout(const Duration(seconds: 10));
+  if (resposta.statusCode != 200) {
+    throw Exception('HTTP ${resposta.statusCode}: consulta recusada.');
+  }
+  final dados = jsonDecode(utf8.decode(resposta.bodyBytes));
+  if (dados is! List) {
+    throw const FormatException('Era esperada uma lista JSON.');
+  }
+  return dados.map((item) {
+    if (item is! Map<String, dynamic>) {
+      throw const FormatException('Registro JSON inválido.');
+    }
+    return Produto.fromMap(item);
+  }).toList();
 }
